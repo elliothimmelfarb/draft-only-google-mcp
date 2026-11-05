@@ -3,6 +3,9 @@
 import asyncio
 import re
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
+
+import pytest
 
 import draft_only_google_mcp
 from draft_only_google_mcp import auth, server
@@ -53,3 +56,55 @@ def test_calendar_writes_never_ask_google_to_notify_guests(monkeypatch):
     server.create_event("Lunch", "2026-01-01", "2026-01-02", attendees=["a@b.com"])
     server.update_event("event-id", attendees=["a@b.com"])
     assert [c["params"]["sendUpdates"] for c in calls] == ["none", "none"]
+
+
+def _tools():
+    return asyncio.run(server.mcp.list_tools())
+
+
+def _required(tool):
+    return {name: "abc" for name in tool.input_schema.get("required", [])}
+
+
+ID_PARAMS = sorted((t.name, p) for t in _tools() for p in t.input_schema.get("properties", {}) if p.endswith("_id"))
+HOSTILE = ["../drafts/send?", "../messages/send?", "../messages/abc/trash?", "..", ".", "", "a/b", "a?b",
+           "a%2fb", "a b", "a\n", "primary/events?sendUpdates=all&x=", "@evil.example/"]
+
+
+def test_every_id_parameter_is_covered():
+    assert len(ID_PARAMS) == 14
+
+
+@pytest.mark.parametrize("tool,param", ID_PARAMS)
+@pytest.mark.parametrize("bad", HOSTILE)
+def test_no_tool_lets_an_id_steer_the_url(google, tool, param, bad):
+    if param == "reply_to_message_id" and not bad:
+        return  # An empty reply id just means this draft is not a reply, so no URL is built from it.
+    kwargs = {**_required(next(t for t in _tools() if t.name == tool)), param: bad}
+    with pytest.raises(ValueError):
+        getattr(server, tool)(**kwargs)
+    assert google.urls == []
+
+
+@pytest.mark.parametrize("tool,param", [p for p in ID_PARAMS if p[1] != "calendar_id"])
+def test_only_calendar_ids_may_hold_a_hash(google, tool, param):
+    kwargs = {**_required(next(t for t in _tools() if t.name == tool)), param: "a#b"}
+    with pytest.raises(ValueError):
+        getattr(server, tool)(**kwargs)
+
+
+def test_final_urls_stay_on_read_and_draft_endpoints(google, monkeypatch):
+    monkeypatch.setenv("DRAFT_ONLY_GOOGLE_ALLOW_ATTENDEES", "1")
+    for tool in _tools():
+        getattr(server, tool.name)(**_required(tool))
+    server.create_event("Lunch", "2026-01-01", "2026-01-02", attendees=["a@b.com"])
+    server.update_event("abc", attendees=["a@b.com"])
+    assert google.urls
+    for url in google.urls:
+        parts = urlsplit(url)
+        assert parts.scheme == "https" and parts.netloc in {"gmail.googleapis.com", "www.googleapis.com"}, url
+        segments = parts.path.split("/")
+        assert ".." not in segments and "send" not in segments and "trash" not in segments, url
+        query = parse_qs(parts.query)
+        assert query.get("sendUpdates", ["none"]) == ["none"], url
+        assert "sendNotifications" not in query, url
