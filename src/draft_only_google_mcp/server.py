@@ -3,6 +3,7 @@
 import base64
 import os
 import re
+import secrets
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -105,13 +106,24 @@ def get_message(message_id: str) -> dict:
     return _full(_api("GET", f"{GMAIL}/messages/{_id(message_id)}", params={"format": "full"}))
 
 
+def _unique_name(filename: str) -> str:
+    name = Path(re.sub(r"[\x00-\x1f\x7f]", "_", filename)).name
+    if name in ("", ".", ".."):
+        name = "attachment"
+    stem, suffix = Path(name).stem[:150], Path(name).suffix[:30]
+    return f"{stem}-{secrets.token_hex(4)}{suffix}"
+
+
 @mcp.tool()
 def download_attachment(message_id: str, attachment_id: str, filename: str) -> str:
-    """Save an attachment to the attachment folder and return the local path."""
+    """Save an attachment to the attachment folder under a new unique name and return the local path."""
     data = _api("GET", f"{GMAIL}/messages/{_id(message_id)}/attachments/{_id(attachment_id)}")["data"]
+    content = base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
     ATTACHMENT_DIR.mkdir(parents=True, exist_ok=True)
-    path = ATTACHMENT_DIR / (Path(filename).name or "attachment")
-    path.write_bytes(base64.urlsafe_b64decode(data + "=" * (-len(data) % 4)))
+    path = ATTACHMENT_DIR / _unique_name(filename)
+    # The name comes from the sender, so never overwrite a file or follow a link planted at the target.
+    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600), "wb") as f:
+        f.write(content)
     return str(path)
 
 
