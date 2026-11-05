@@ -3,7 +3,9 @@
 import base64
 import html
 import mimetypes
+import os
 import re
+import stat
 from pathlib import Path
 from email.message import EmailMessage
 
@@ -107,6 +109,29 @@ def to_html(text: str) -> str:
     return f'<div dir="ltr">{body}</div>'
 
 
+MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024  # Gmail's own limit for one message.
+
+
+def read_attachment(path: str, roots: list[Path], budget: int) -> tuple[str, bytes]:
+    """Read a local file for a draft, and only if it is a regular file inside one of `roots`.
+    Links are resolved first, so a link inside a root cannot point out of it."""
+    real = Path(path).expanduser().resolve(strict=True)
+    if not any(real.is_relative_to(Path(root).expanduser().resolve()) for root in roots):
+        raise PermissionError(f"{path} is outside the folders drafts may attach from. "
+                              "Move it there, or add its folder to DRAFT_ONLY_GOOGLE_ATTACHMENT_ROOTS.")
+    # O_NONBLOCK so a named pipe cannot hang the server before the check below refuses it.
+    fd = os.open(real, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise ValueError(f"{path} is not a regular file.")
+        data = os.read(fd, budget + 1)
+    finally:
+        os.close(fd)
+    if len(data) > budget:
+        raise ValueError(f"Attachments on a draft are limited to {MAX_ATTACHMENT_BYTES} bytes in total.")
+    return real.name, data
+
+
 def build_raw_message(
     *,
     to: str,
@@ -116,8 +141,10 @@ def build_raw_message(
     bcc: str | None = None,
     reply_to: dict[str, str] | None = None,
     attachments: list[str] | None = None,
+    attachment_roots: list[Path] = (),
 ) -> str:
-    """Build a base64url RFC 822 message. reply_to holds the original's headers; attachments are local paths."""
+    """Build a base64url RFC 822 message. reply_to holds the original's headers; attachments are
+    local paths, each of which must sit inside attachment_roots."""
     msg = EmailMessage()
     msg["To"] = to
     if cc:
@@ -137,8 +164,10 @@ def build_raw_message(
     text = unwrap(body)
     msg.set_content(text)
     msg.add_alternative(to_html(text), subtype="html")
+    budget = MAX_ATTACHMENT_BYTES
     for path in attachments or []:
-        f = Path(path).expanduser()
-        maintype, subtype = (mimetypes.guess_type(f.name)[0] or "application/octet-stream").split("/")
-        msg.add_attachment(f.read_bytes(), maintype=maintype, subtype=subtype, filename=f.name)
+        filename, data = read_attachment(path, list(attachment_roots), budget)
+        budget -= len(data)
+        maintype, subtype = (mimetypes.guess_type(filename)[0] or "application/octet-stream").split("/")
+        msg.add_attachment(data, maintype=maintype, subtype=subtype, filename=filename)
     return base64.urlsafe_b64encode(msg.as_bytes()).decode()

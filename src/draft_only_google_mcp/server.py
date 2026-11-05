@@ -131,6 +131,11 @@ def modify_thread_labels(thread_id: str, add_label_ids: list[str] | None = None,
     return {"threadId": th["id"], "ok": True}
 
 
+def _attachment_roots() -> list[Path]:
+    configured = os.environ.get("DRAFT_ONLY_GOOGLE_ATTACHMENT_ROOTS", "")
+    return [Path(root) for root in configured.split(os.pathsep) if root.strip()] or [ATTACHMENT_DIR]
+
+
 def _draft_message(to, body, subject, cc, bcc, reply_to_message_id, attachments=None) -> dict:
     original, thread_id = None, None
     if reply_to_message_id:
@@ -138,7 +143,7 @@ def _draft_message(to, body, subject, cc, bcc, reply_to_message_id, attachments=
                  params={"format": "metadata", "metadataHeaders": ["Message-ID", "References", "Subject"]})
         original, thread_id = headers_of(m["payload"]), m["threadId"]
     message = {"raw": build_raw_message(to=to, subject=subject, body=body, cc=cc, bcc=bcc, reply_to=original,
-                                         attachments=attachments)}
+                                         attachments=attachments, attachment_roots=_attachment_roots())}
     if thread_id:
         message["threadId"] = thread_id
     return message
@@ -151,7 +156,8 @@ def create_draft(to: str, body: str, subject: str | None = None, cc: str | None 
     """Create a draft in the mailbox (it is NOT sent). For a reply, pass reply_to_message_id
     and leave subject empty to get "Re: <original>" threaded correctly. Write each paragraph as
     one line; lines wrapped by hand are joined so the email fills the reader's window.
-    attachments: absolute paths of local files to attach."""
+    attachments: absolute paths of local files to attach. Each must be a regular file inside the
+    attachment folder or DRAFT_ONLY_GOOGLE_ATTACHMENT_ROOTS, and together they must fit in 25 MB."""
     d = _api("POST", f"{GMAIL}/drafts",
              json={"message": _draft_message(to, body, subject, cc, bcc, reply_to_message_id, attachments)})
     return {"draftId": d["id"], "messageId": d["message"]["id"], "threadId": d["message"].get("threadId"),

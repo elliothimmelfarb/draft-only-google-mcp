@@ -1,10 +1,12 @@
 import base64
 import email
 import email.policy
+import os
 import time
 
 import pytest
 
+from draft_only_google_mcp import mail, server
 from draft_only_google_mcp.mail import build_raw_message, extract_body, html_to_text
 from draft_only_google_mcp.auth import check_account
 
@@ -104,7 +106,8 @@ def test_draft_carries_html_so_gmail_does_not_hard_wrap_it():
 def test_attachment_rides_along_with_the_body(tmp_path):
     pdf = tmp_path / "one-pager.pdf"
     pdf.write_bytes(b"%PDF-1.4 fake")
-    raw = build_raw_message(to="a@b.com", subject="Hi", body="Hello", attachments=[str(pdf)])
+    raw = build_raw_message(to="a@b.com", subject="Hi", body="Hello", attachments=[str(pdf)],
+                            attachment_roots=[tmp_path])
     msg = email.message_from_bytes(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)), policy=email.policy.default)
     assert msg.get_content_type() == "multipart/mixed"
     att = next(msg.iter_attachments())
@@ -132,3 +135,65 @@ def test_html_to_text_hides_an_unclosed_script_as_a_browser_would():
 
 def test_html_to_text_keeps_a_bare_less_than():
     assert html_to_text("1 < 2") == "1 < 2"
+
+
+def attach(path, roots):
+    return build_raw_message(to="a@b.com", subject="s", body="b", attachments=[str(path)], attachment_roots=roots)
+
+
+def test_attachment_outside_the_roots_is_refused(tmp_path):
+    root, outside = tmp_path / "root", tmp_path / "private.txt"
+    root.mkdir()
+    outside.write_text("secret")
+    with pytest.raises(PermissionError):
+        attach(outside, [root])
+    with pytest.raises(PermissionError):
+        attach(root / ".." / "private.txt", [root])
+
+
+def test_no_roots_means_no_attachments(tmp_path):
+    (tmp_path / "a.txt").write_text("x")
+    with pytest.raises(PermissionError):
+        build_raw_message(to="a@b.com", subject="s", body="b", attachments=[str(tmp_path / "a.txt")])
+
+
+def test_symlink_out_of_a_root_is_refused(tmp_path):
+    root, outside = tmp_path / "root", tmp_path / "private.txt"
+    root.mkdir()
+    outside.write_text("secret")
+    (root / "link.txt").symlink_to(outside)
+    with pytest.raises(PermissionError):
+        attach(root / "link.txt", [root])
+
+
+def test_only_regular_files_can_be_attached(tmp_path):
+    fifo = tmp_path / "pipe"
+    os.mkfifo(fifo)
+    for path in (fifo, tmp_path):
+        with pytest.raises(ValueError):
+            attach(path, [tmp_path])
+
+
+def test_attachment_size_cap_covers_the_whole_draft(tmp_path, monkeypatch):
+    monkeypatch.setattr(mail, "MAX_ATTACHMENT_BYTES", 8)
+    one, two = tmp_path / "one", tmp_path / "two"
+    one.write_bytes(b"x" * 9)
+    two.write_bytes(b"x" * 5)
+    with pytest.raises(ValueError):
+        attach(one, [tmp_path])
+    attach(two, [tmp_path])
+    with pytest.raises(ValueError):
+        build_raw_message(to="a@b.com", subject="s", body="b", attachments=[str(two), str(two)],
+                          attachment_roots=[tmp_path])
+
+
+def test_create_draft_only_attaches_from_the_configured_roots(google, monkeypatch, tmp_path_factory):
+    other = tmp_path_factory.mktemp("other")
+    (other / "a.txt").write_text("x")
+    monkeypatch.delenv("DRAFT_ONLY_GOOGLE_ATTACHMENT_ROOTS", raising=False)
+    with pytest.raises(PermissionError):
+        server.create_draft("a@b.com", "b", attachments=[str(other / "a.txt")])
+    assert google.urls == []
+    monkeypatch.setenv("DRAFT_ONLY_GOOGLE_ATTACHMENT_ROOTS", str(other))
+    server.create_draft("a@b.com", "b", attachments=[str(other / "a.txt")])
+    assert len(google.urls) == 1
