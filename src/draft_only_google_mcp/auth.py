@@ -14,6 +14,7 @@ from google.oauth2.credentials import Credentials
 ACCOUNT = os.environ.get("DRAFT_ONLY_GOOGLE_ACCOUNT", "").strip()
 KEYCHAIN_SERVICE = os.environ.get("DRAFT_ONLY_GOOGLE_KEYCHAIN_SERVICE", "draft-only-google-mcp")
 KEYCHAIN_ACCOUNT = ACCOUNT or "default"
+SECURITY = "/usr/bin/security"  # Absolute, so a planted `security` on PATH never sees the token.
 
 # gmail.modify covers reading, labels and drafts. No Google scope allows drafts without
 # also allowing send, so "never send" is enforced by this server exposing no send tool.
@@ -43,13 +44,13 @@ def _keychain_set(value: str) -> None:
     # Fed through stdin so the secret never appears in the process list.
     encoded = base64.b64encode(value.encode()).decode()
     cmd = f'add-generic-password -U -s "{service}" -a "{account}" -w "{encoded}"\n'
-    subprocess.run(["security", "-i"], input=cmd, text=True, check=True, capture_output=True)
+    subprocess.run([SECURITY, "-i"], input=cmd, text=True, check=True, capture_output=True)
 
 
 def _keychain_get() -> str | None:
     service, account = _keychain_names()
     r = subprocess.run(
-        ["security", "find-generic-password", "-s", service, "-a", account, "-w"],
+        [SECURITY, "find-generic-password", "-s", service, "-a", account, "-w"],
         capture_output=True, text=True,
     )
     if r.returncode != 0:

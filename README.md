@@ -2,15 +2,15 @@
 
 This is a small MCP server that gives Claude access to one Gmail mailbox and its Google Calendar. Claude can read mail, manage labels, write drafts and work with calendar events. It has no way to send email, so you review every draft and send it yourself from Gmail.
 
-It is about 460 lines of Python. It depends only on Anthropic's `mcp` SDK, Google's auth libraries and `requests`, and it talks only to the Gmail API, the Calendar API and Google OAuth.
+It is about 560 lines of Python. It depends only on Anthropic's `mcp` SDK, Google's auth libraries and `requests`, and it talks only to the Gmail API, the Calendar API and Google OAuth.
 
 **macOS only.** Tokens are stored in the macOS Keychain and nowhere else, and the server refuses to start a login or read a token on any other system. Linux and Windows are not supported today.
 
 ## What the guarantee covers
 
-There is no code path in this server that sends mail. It has no send tool, it never calls Gmail's send endpoints, and it does not speak SMTP. Calendar writes always pass `sendUpdates=none`, and no tool has a parameter that changes that.
+There is no code path in this server that sends mail. It has no send tool, it never calls Gmail's send endpoints, and it does not speak SMTP. Every id goes through one check before it reaches a URL, so an id cannot steer a request to another endpoint. Calendar writes always pass `sendUpdates=none`, and no tool has a parameter that changes that.
 
-`tests/test_no_send.py` enforces this. It fails if the source mentions a send endpoint, a send scope or SMTP, if the OAuth scopes or the tool list change from a fixed list, if a tool gains a parameter with `send` or `notify` in its name, or if a calendar write asks Google to notify guests.
+`tests/test_no_send.py` enforces this. It fails if the source mentions a send endpoint, a send scope or SMTP, if the OAuth scopes or the tool list change from a fixed list, if a tool gains a parameter with `send` or `notify` in its name, if a calendar write asks Google to notify guests, or if the final URL of any tool call leaves the Gmail and Calendar read and draft endpoints.
 
 ## What the guarantee does not cover
 

@@ -187,12 +187,13 @@ def update_draft(draft_id: str, to: str, body: str, subject: str | None = None, 
 
 @mcp.tool()
 def list_drafts(max_results: int = 20) -> list[dict]:
-    """List drafts in the mailbox."""
+    """List drafts in the mailbox, including any Bcc recipients."""
     drafts = _api("GET", f"{GMAIL}/drafts", params={"maxResults": min(max_results, 50)}).get("drafts", [])
 
     def fetch(d):
         full = _api("GET", f"{GMAIL}/drafts/{_id(d['id'])}", params={"format": "full"})
-        return {"draftId": d["id"], **_full(full["message"])}
+        bcc = headers_of(full["message"].get("payload", {})).get("Bcc")
+        return {"draftId": d["id"], **_full(full["message"]), **({"bcc": bcc} if bcc else {})}
 
     with ThreadPoolExecutor(8) as pool:
         return list(pool.map(fetch, drafts))
