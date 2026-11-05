@@ -18,7 +18,7 @@ The guarantee is about this server's code, not about the Google token, so these 
 
 - **The token itself can send.** Gmail has no scope that allows drafts without also allowing send, so this server uses `gmail.modify`, which Google describes as read, compose and send. Other software holding this token could send mail.
 - **An agent with a shell can reach the token.** The token is stored in the Keychain by the `security` command, so a process running as your user can read it back with that same command without a prompt. If you need the limit to hold, do not also give the agent unrestricted shell access.
-- **Calendar guests can still hear about events.** An event with attendees can appear on their calendars even though no invite is requested, and Google's documentation says some emails might still be sent. Treat adding a guest as a visible action.
+- **Calendar guests can still hear about events.** `attendees` is refused unless you turn on `DRAFT_ONLY_GOOGLE_ALLOW_ATTENDEES`. Once it is on, an event with attendees can appear on their calendars even though no invite is requested, and Google's documentation says some emails might still be sent. Changing an event that already has guests can reach them the same way. Treat adding a guest as a visible action.
 - **Drafts can hold private content.** `create_draft` can attach any local file the server can read, and mail you ask Claude to read can contain instructions written by strangers. Read each draft and its recipients before you send it.
 
 ## Tools
@@ -68,6 +68,7 @@ All settings are optional environment variables. Set them for both the `login` c
 | `DRAFT_ONLY_GOOGLE_SERVER_NAME` | `draft-only-google` | The name the MCP server reports. |
 | `DRAFT_ONLY_GOOGLE_ATTACHMENT_DIR` | `~/Downloads/draft-only-google-mcp` | Where `download_attachment` saves files. |
 | `DRAFT_ONLY_GOOGLE_TIME_ZONE` | `UTC` | The default time zone for calendar events. |
+| `DRAFT_ONLY_GOOGLE_ALLOW_ATTENDEES` | off | Set to `1`, `true`, `yes` or `on` to let `create_event` and `update_event` set guests. |
 
 To use two mailboxes, register the server twice with a different `DRAFT_ONLY_GOOGLE_ACCOUNT` for each and run `login` once for each.
 

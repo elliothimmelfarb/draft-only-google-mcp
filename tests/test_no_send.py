@@ -51,6 +51,7 @@ def test_tools_are_exactly_the_known_list_and_none_can_send():
 
 
 def test_calendar_writes_never_ask_google_to_notify_guests(monkeypatch):
+    monkeypatch.setenv("DRAFT_ONLY_GOOGLE_ALLOW_ATTENDEES", "1")
     calls = []
     monkeypatch.setattr(server, "_api", lambda method, url, **kw: calls.append(kw) or {})
     server.create_event("Lunch", "2026-01-01", "2026-01-02", attendees=["a@b.com"])
@@ -108,3 +109,25 @@ def test_final_urls_stay_on_read_and_draft_endpoints(google, monkeypatch):
         query = parse_qs(parts.query)
         assert query.get("sendUpdates", ["none"]) == ["none"], url
         assert "sendNotifications" not in query, url
+
+
+def test_attendees_are_refused_unless_turned_on(google, monkeypatch):
+    monkeypatch.delenv("DRAFT_ONLY_GOOGLE_ALLOW_ATTENDEES", raising=False)
+    for call in (lambda: server.create_event("Lunch", "2026-01-01", "2026-01-02", attendees=["a@b.com"]),
+                 lambda: server.update_event("abc", attendees=["a@b.com"]),
+                 lambda: server.update_event("abc", attendees=[])):
+        with pytest.raises(PermissionError, match="DRAFT_ONLY_GOOGLE_ALLOW_ATTENDEES"):
+            call()
+    assert google.urls == []
+
+
+def test_setting_off_values_do_not_allow_attendees(google, monkeypatch):
+    monkeypatch.setenv("DRAFT_ONLY_GOOGLE_ALLOW_ATTENDEES", "0")
+    with pytest.raises(PermissionError):
+        server.update_event("abc", attendees=["a@b.com"])
+
+
+def test_calendar_docs_do_not_promise_that_guests_stay_unaware():
+    text = " ".join(t.description for t in _tools() if t.name in ("create_event", "update_event"))
+    assert "never notified" not in text
+    assert "may still" in text

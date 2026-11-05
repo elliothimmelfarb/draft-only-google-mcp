@@ -218,6 +218,13 @@ def get_event(event_id: str, calendar_id: str = "primary") -> dict:
     return _event(_api("GET", f"{CAL}/calendars/{_id(calendar_id, calendar=True)}/events/{_id(event_id)}"))
 
 
+def _check_attendees(attendees: list[str] | None) -> None:
+    allowed = os.environ.get("DRAFT_ONLY_GOOGLE_ALLOW_ATTENDEES", "").strip().lower() in ("1", "true", "yes", "on")
+    if attendees is not None and not allowed:
+        raise PermissionError("Adding guests is off, because Google may email them. "
+                              "Leave out attendees, or set DRAFT_ONLY_GOOGLE_ALLOW_ATTENDEES=1 to turn it on.")
+
+
 def _when(value: str) -> dict:
     return {"date": value} if len(value) == 10 else {"dateTime": value}
 
@@ -227,7 +234,10 @@ def create_event(summary: str, start: str, end: str, calendar_id: str = "primary
                  description: str | None = None, location: str | None = None,
                  attendees: list[str] | None = None, time_zone: str = TIME_ZONE) -> dict:
     """Create a calendar event. start/end are RFC 3339 datetimes or YYYY-MM-DD for all-day.
-    Guests are never notified by this server; a person sends any invite from Google Calendar."""
+    attendees is refused unless DRAFT_ONLY_GOOGLE_ALLOW_ATTENDEES is on. This server asks Google
+    not to notify guests, but the event may still appear on their calendars and Google may still
+    email them, so treat adding a guest as a visible action."""
+    _check_attendees(attendees or None)
     body = {"summary": summary, "start": {**_when(start), "timeZone": time_zone},
             "end": {**_when(end), "timeZone": time_zone}}
     if description:
@@ -247,7 +257,9 @@ def update_event(event_id: str, calendar_id: str = "primary", summary: str | Non
                  location: str | None = None, attendees: list[str] | None = None,
                  time_zone: str = TIME_ZONE) -> dict:
     """Change fields on a calendar event; omitted fields stay as they are.
-    attendees replaces the whole list. Guests are never notified by this server."""
+    attendees replaces the whole list and is refused unless DRAFT_ONLY_GOOGLE_ALLOW_ATTENDEES is on.
+    This server asks Google not to notify guests, but Google may still email them about a change."""
+    _check_attendees(attendees)
     body = {}
     if summary is not None:
         body["summary"] = summary
