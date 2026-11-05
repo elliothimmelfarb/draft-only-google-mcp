@@ -22,12 +22,31 @@ def _find_part(payload: dict, mime: str) -> str | None:
     return None
 
 
+# Linear on purpose. Regexes over the whole body, and html.parser on Python 3.12, take
+# quadratic time or worse on a body like "<script" repeated, and mail comes from strangers.
+MAX_HTML_CHARS = 2_000_000
+_TAG = re.compile(r"</?([a-zA-Z][a-zA-Z0-9]*)")
+_RAW_END = {name: re.compile(rf"</{name}\s*>", re.IGNORECASE) for name in ("script", "style")}
+_LINE_ENDS = {"p", "div", "tr", "li"}
+
+
 def html_to_text(s: str) -> str:
-    s = re.sub(r"(?is)<(script|style).*?</\1>", "", s)
-    s = re.sub(r"(?i)<br\s*/?>|</p>|</div>|</tr>|</li>", "\n", s)
-    s = re.sub(r"<[^>]+>", "", s)
-    s = html.unescape(s)
-    return re.sub(r"\n\s*\n\s*\n+", "\n\n", s).strip()
+    s = s[:MAX_HTML_CHARS]
+    out, i = [], 0
+    while (start := s.find("<", i)) >= 0 and (end := s.find(">", start)) >= 0:
+        out.append(s[i:start])
+        i = end + 1
+        tag = _TAG.match(s, start)
+        name = tag[1].lower() if tag else ""
+        closing = s[start + 1] == "/"
+        if name in _RAW_END and not closing:
+            close = _RAW_END[name].search(s, i)
+            i = close.end() if close else len(s)
+        elif name == "br" or (closing and name in _LINE_ENDS):
+            out.append("\n")
+    out.append(s[i:])
+    text = html.unescape("".join(out))
+    return re.sub(r"\n\s*\n\s*\n+", "\n\n", text).strip()
 
 
 def extract_body(payload: dict) -> str:

@@ -1,10 +1,11 @@
 import base64
 import email
 import email.policy
+import time
 
 import pytest
 
-from draft_only_google_mcp.mail import build_raw_message, extract_body
+from draft_only_google_mcp.mail import build_raw_message, extract_body, html_to_text
 from draft_only_google_mcp.auth import check_account
 
 
@@ -111,3 +112,23 @@ def test_attachment_rides_along_with_the_body(tmp_path):
     assert att.get_content_type() == "application/pdf"
     assert att.get_content() == b"%PDF-1.4 fake"
     assert msg.get_body(("html",)) is not None
+
+
+@pytest.mark.parametrize("unit", ["<script", "<", "<style", "<a ", "</", "<script>", "</script", "&#", "\n \n"])
+def test_html_to_text_stays_fast_on_hostile_mail(unit):
+    started = time.perf_counter()
+    html_to_text(unit * 200_000)
+    assert time.perf_counter() - started < 1
+
+
+def test_html_to_text_drops_scripts_and_styles_and_keeps_the_rest():
+    text = html_to_text("<P>one</P><SCRIPT type=x>bad()</script ><style>.x{}</STYLE>two<br/>three &amp; four")
+    assert text == "one\ntwo\nthree & four"
+
+
+def test_html_to_text_hides_an_unclosed_script_as_a_browser_would():
+    assert html_to_text("<p>shown</p><script>hidden") == "shown"
+
+
+def test_html_to_text_keeps_a_bare_less_than():
+    assert html_to_text("1 < 2") == "1 < 2"
