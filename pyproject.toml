@@ -1,0 +1,29 @@
+[project]
+name = "draft-only-google-mcp"
+version = "0.1.0"
+description = "Gmail and Google Calendar MCP server for Claude with no way to send email"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Elliot Himmelfarb" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "google-auth>=2.62.0",
+    "google-auth-oauthlib>=1.5.0",
+    "mcp>=2.3,<3",
+    "requests>=2.34.2",
+]
+
+[project.scripts]
+draft-only-google-mcp = "draft_only_google_mcp.server:main"
+
+[build-system]
+requires = ["uv_build>=0.11.23,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
